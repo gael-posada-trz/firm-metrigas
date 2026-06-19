@@ -3,7 +3,7 @@ import network
 import json
 import os
 import utime
-import ubluetooth as bluetooth
+import ubluetooth
 
 # Import boot.py to inherit its network functions and state variables
 import boot
