@@ -114,6 +114,13 @@ async def start_rescue_server():
     while _server_running:
         if _provisioning_done:
             print(f"{TAG} New credentials updated via rescue server. Validating access point link status.")
+            # We turn off advertising BEFORE validating.
+            # This prevents the phone from trying to send something else while we're verifying. 
+            _ble.gap_advertise(None)
+
+            # We immediately lower the flag.
+            # We've captured the event; we've released the state for future use.
+            _provisioning_done = False
             # Verify network connection using the new credentials
             success = await wifi_manager.test_new_credentials(_ble_context["ssid"], _ble_context["password"])
             if success:
@@ -124,7 +131,6 @@ async def start_rescue_server():
                 break
             else:
                 print(f"{TAG} WARNING: Rescue validation link failed. Resuming advertising pulses.")
-                _provisioning_done = False
                 _ble.gap_advertise(100000, payload)
                 
         await uasyncio.sleep_ms(250)
@@ -137,36 +143,40 @@ async def run_blocking_provisioning():
     global _provisioning_done, _server_running
     print(f"{TAG} Entering critical first-time device binding routine.")
     
+    # We initialize the physical BLE stack once outside the retry loop
     _init_ble_stack()
-    _server_running = True
-    _provisioning_done = False
-    
-    # Advertise using the generic factory default fallback name ("ESP32_PROV")
-    payload = _build_advertising_payload(boot.device_name)
-    _ble.gap_advertise(100000, payload)
-    
-    # Fast polling blocking mechanism
-    while not _provisioning_done:
-        await asyncio.sleep_ms(200)
+
+    while True:
+        _server_running = True
+        _provisioning_done = False
         
-    print(f"{TAG} Initial transmission capture successful. Testing infrastructure connectivity.")
-    _ble.gap_advertise(None)  # Quiet down radio while testing router link
-    
-    # Force full synchronous check via boot mechanism
-    success = boot.check_and_connect_wifi(_ble_context["ssid"], _ble_context["password"], boot.WIFI_TIMEOUT_MS)
-    
-    if success:
-        # Create initial 4-field config payload atomically using placeholders for business logic
-        config_manager.save_config_atomic(
-            ssid=_ble_context["ssid"], 
-            password=_ble_context["password"],
-            device_name="ESP32_PROV",
-            is_premium=False
-        )
-        print(f"{TAG} Verification succeeded. Factory onboarding accomplished.")
-        stop_rescue_server()
-    else:
-        print(f"{TAG} ERROR: Factory credentials failed. Resetting state and retrying sequence.")
-        stop_rescue_server()
-        # Recursive asynchronous restart
-        await run_blocking_provisioning()
+        # Advertise using the generic factory default fallback name ("ESP32_PROV")
+        payload = _build_advertising_payload(boot.device_name)
+        _ble.gap_advertise(100000, payload)
+        
+        # Fast polling blocking mechanism
+        while not _provisioning_done:
+            await asyncio.sleep_ms(200)
+            
+        print(f"{TAG} Initial transmission capture successful. Testing infrastructure connectivity.")
+        _ble.gap_advertise(None)  # Quiet down radio while testing router link
+        
+        # Force full synchronous check via boot mechanism
+        success = boot.check_and_connect_wifi(_ble_context["ssid"], _ble_context["password"], boot.WIFI_TIMEOUT_MS)
+        
+        if success:
+            # Create initial 4-field config payload atomically using placeholders for business logic
+            config_manager.save_config_atomic(
+                ssid=_ble_context["ssid"], 
+                password=_ble_context["password"],
+                device_name="ESP32_PROV",
+                is_premium=False
+            )
+            print(f"{TAG} Verification succeeded. Factory onboarding accomplished.")
+            stop_rescue_server()
+            break #Breaks the infinite loop and continues execution safely
+        else:
+            print(f"{TAG} ERROR: Factory credentials failed. Resetting state and retrying sequence.")
+            stop_rescue_server()
+            # Recursive asynchronous restart
+            await asyncio.sleep_ms(500)  # Minimal settling delay before turning the radio back on
