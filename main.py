@@ -20,6 +20,13 @@ async def wifi_maintenance_task():
         if not wlan.isconnected():
             print(f"{TAG} ALERT: Connectivity loss detected during runtime execution.")
             
+            try:
+                wlan.active(False)
+                await uasyncio.sleep_ms(100)
+                wlan.active(True)
+            except:
+                pass # Safe pass if it's already in an atomic lock
+
             # 1. Trigger non-blocking silent background reconnection attempt
             await network_manager.attempt_silent_reconnection()
             
@@ -50,14 +57,26 @@ async def sensor_polling_mock_task():
 async def main_orchestrator():
     """
     Main asynchronous coordinator for the production firmware lifecycle state machine.
+    Distinguishes between first-time factory setup and runtime connectivity drops.
     """
     print(f"{TAG} Bootstrapping system modules setup...")
     
-    # PHASE 1: Initial Provisioning diagnostics evaluation derived from boot.py
-    if boot.force_pairing or not boot.wifi_connected:
-        print(f"{TAG} Configuration missing or unreachable. Entering blocking BLE onboarding mode.")
-        # Blocks sequential execution until Flutter sends initial "SSID,PASSWORD" packet via BLE
+    # Check if the cache contains actual credentials from a valid config.json
+    has_stored_credentials = bool(boot.current_credentials["ssid"])
+    
+    # PHASE 1: Initial Provisioning diagnostics evaluation
+    # ONLY enter blocking mode if force_pairing is True OR it is a clean factory device (no SSID cached)
+    if boot.force_pairing or not has_stored_credentials:
+        print(f"{TAG} Critical First-Time Onboarding: No cached network profile detected.")
+        print(f"{TAG} Entering blocking BLE onboarding mode for factory setup.")
+        # Blocks sequential execution until Flutter sends initial "SSID,PASSWORD"
         await ble_manager.run_blocking_provisioning()
+    
+    else:
+        # SCENARIO REGISTERED: The device has a valid config.json, but Wi-Fi failed during boot.py
+        if not boot.wifi_connected:
+            print(f"{TAG} Baseline profile detected but network link is down.")
+            print(f"{TAG} Bypassing blocking setup. System core will initialize concurrently.")
     
     # PHASE 2: Hardware Core Subsystems Activation
     wlan = network.WLAN(network.STA_IF)
@@ -68,13 +87,13 @@ async def main_orchestrator():
     
     # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
     uasyncio.create_task(wifi_maintenance_task())
-    uasyncio.create_task(sensor_polling_mock_task())  # Keeps the scheduler doing something safe
+    uasyncio.create_task(sensor_polling_mock_task())  # Your sensor simulation loop
     
-    # PHASE 3: Loop Keep-Alive (Replaces the WebSocket server during early testing)
+    # PHASE 3: Loop Keep-Alive (Will hold the main thread up)
     print(f"{TAG} Infrastructure ready. Entering main test loop...")
     while True:
         await uasyncio.sleep(1)
-
+        
 # --- MICROCONTROLLER SUBSYSTEM ENTRY POINT ---
 if __name__ == "__main__":
     try:

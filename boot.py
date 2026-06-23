@@ -36,10 +36,8 @@ def load_config():
                     current_credentials["password"] = data["password"]
                     
                     # Safe extraction of application fields with production defaults
-                    #device_name = data.get("device_name", "ESP32_PROV")
-                    #is_premium = data.get("is_premium", False)
-                    device_name = data["device_name"]
-                    is_premium = data["is_premium"]
+                    device_name = data.get("device_name", "ESP32_PROV")
+                    is_premium = data.get("is_premium", False)
                     
                     print(f"{TAG} System configuration successfully loaded from Flash storage.")
                     return True
@@ -68,7 +66,13 @@ def check_and_connect_wifi(ssid, password, timeout):
         return True
         
     print(f"{TAG} Attempting network connection to Target SSID: {ssid}")
-    wlan.connect(ssid, password)
+    try:
+        wlan.connect(ssid, password)
+    except OSError as driver_error:
+        print(f"{TAG} CRITICAL WARNING: Driver level anomaly intercepted: {driver_error}")
+        print(f"{TAG} Forcing safe fallback: Preserving hardware execution flow toward main.py")
+        wifi_connected = False
+        return False
     
     start_time = utime.ticks_ms()
     while not wlan.isconnected():
