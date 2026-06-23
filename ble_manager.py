@@ -3,7 +3,7 @@ import uasyncio
 import utime
 import boot
 import config_manager
-import wifi_manager
+import network_manager
 
 TAG = "[BLE]"
 
@@ -122,7 +122,7 @@ async def start_rescue_server():
             # We've captured the event; we've released the state for future use.
             _provisioning_done = False
             # Verify network connection using the new credentials
-            success = await wifi_manager.test_new_credentials(_ble_context["ssid"], _ble_context["password"])
+            success = await network_manager.test_new_credentials(_ble_context["ssid"], _ble_context["password"])
             if success:
                 # Atomically write configuration including existing name/premium states
                 config_manager.save_config_atomic(ssid=_ble_context["ssid"], password=_ble_context["password"])
