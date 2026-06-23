@@ -38,8 +38,24 @@ def _ble_irq_handler(event, data):
     """
     global _provisioning_done, _handle_char_wifi
     
+    #Event 1: _IRQ_CENTRAL_CONNECT (A phone or tablet just paired/connected)
+    if event == 1:
+        conn_handle, addr_type, addr = data
+        # Convert raw MAC address bytes to a human-readable string representation
+        mac_address = ":".join([f"{b:02X}" for b in addr])
+        print(f"{TAG} Central client device linked successfully via BLE link layer. Peer MAC: {mac_address}")
+
+    # Event 2: _IRQ_CENTRAL_DISCONNECT (The phone disconnected or went out of range)
+    elif event == 2:
+        conn_handle, addr_type, addr = data
+        print(f"{TAG} Central client device terminated BLE link connection channel.")
+        # If the server is still active, make sure we resume advertising so it stays visible
+        if _server_running and not _provisioning_done:
+            payload = _build_advertising_payload(boot.device_name)
+            _ble.gap_advertise(100000, payload)
+
     # Event 3: _IRQ_GATTS_WRITE (A central device wrote data to a characteristic)
-    if event == 3:
+    elif event == 3:
         conn_handle, value_handle = data
         if value_handle == _handle_char_wifi:
             try:
@@ -84,7 +100,7 @@ def _init_ble_stack():
     SERVICE_CONFIG = (UUID_SERVICE, (CHAR_CONFIG,),)
     
     # Register the service in native RAM and save pointer address
-    (((_handle_char_wifi,),),) = _ble.gatts_register_services((SERVICE_CONFIG,))
+    _handle_char_wifi= _ble.gatts_register_services((SERVICE_CONFIG,))[0][0]
 
 def stop_rescue_server():
     """Gracefully kills advertising loops and tears down the BLE stack to maximize free heap RAM."""
