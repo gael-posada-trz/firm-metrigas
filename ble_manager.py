@@ -156,7 +156,7 @@ async def run_blocking_provisioning():
         
         # Fast polling blocking mechanism
         while not _provisioning_done:
-            await asyncio.sleep_ms(200)
+            await uasyncio.sleep_ms(200)
             
         print(f"{TAG} Initial transmission capture successful. Testing infrastructure connectivity.")
         _ble.gap_advertise(None)  # Quiet down radio while testing router link
@@ -179,4 +179,4 @@ async def run_blocking_provisioning():
             print(f"{TAG} ERROR: Factory credentials failed. Resetting state and retrying sequence.")
             stop_rescue_server()
             # Recursive asynchronous restart
-            await asyncio.sleep_ms(500)  # Minimal settling delay before turning the radio back on
+            await uasyncio.sleep_ms(500)  # Minimal settling delay before turning the radio back on
