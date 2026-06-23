@@ -37,23 +37,23 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
   bool _bleConectado = false;
 
   WebSocketChannel? _channel;
-  List<String> _historialMensajes = [];
+  final List<String> _historialMensajes = [];
   bool _estaConectadoWs = false;
 
-  // UUIDs idénticos a los definidos en MicroPython
-  final String serviceUuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-  final String rxUuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+  // CAMBIO 1: UUIDs idénticos a los definidos en ble_manager.py (en minúsculas para Flutter)
+  final String serviceUuid = "0000fff0-0000-1000-8000-00805f9b34fb";
+  final String rxUuid = "0000fff1-0000-1000-8000-00805f9b34fb";
 
   // --- PASO 1: CONFIGURACIÓN BLE ---
   void comenzarEscaneoBLE() async {
     setState(() => _estaEscaneando = true);
     
-    // Iniciar escaneo de dispositivos
     await FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
 
     FlutterBluePlus.scanResults.listen((results) async {
       for (ScanResult r in results) {
-        if (r.device.platformName == "ESP32-BLE-Config") {
+        // CAMBIO 2: Filtrar por el nombre que MicroPython expone por defecto ("ESP32_PROV")
+        if (r.device.platformName == "ESP32_PROV" || r.device.platformName.contains("ESP32")) {
           await FlutterBluePlus.stopScan();
           _targetDevice = r.device;
           _conectarAlESP32Ble();
@@ -63,7 +63,7 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
     });
 
     await Future.delayed(const Duration(seconds: 5));
-    setState(() => _estaEscaneando = false);
+    if (mounted) setState(() => _estaEscaneando = false);
   }
 
   void _conectarAlESP32Ble() async {
@@ -71,14 +71,13 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
 
     try {
       await _targetDevice!.connect();
-      setState(() => _bleConectado = true);
+      if (mounted) setState(() => _bleConectado = true);
 
-      // Descubrir los servicios del ESP32
       List<BluetoothService> services = await _targetDevice!.discoverServices();
       for (var service in services) {
-        if (service.uuid.toString() == serviceUuid) {
+        if (service.uuid.toString().toLowerCase() == serviceUuid) {
           for (var characteristic in service.characteristics) {
-            if (characteristic.uuid.toString() == rxUuid) {
+            if (characteristic.uuid.toString().toLowerCase() == rxUuid) {
               _rxCharacteristic = characteristic;
               _mostrarAlerta("BLE Conectado", "Conexión exitosa con el ESP32. Ya puedes enviar los datos.");
             }
@@ -98,19 +97,21 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
 
     final ssid = _ssidController.text.trim();
     final pass = _passController.text.trim();
-    final payload = "$ssid;$pass";
+    
+    // CAMBIO 3: Tu MicroPython espera "SSID,PASSWORD" usando una coma en lugar de un punto y coma.
+    final payload = "$ssid,$pass";
 
     try {
-      // Enviar la cadena formateada como bytes
-      await _rxCharacteristic!.write(utf8.encode(payload), cleanTransientQueue: true);
-      _mostrarAlerta("Datos Enviados", "El ESP32 ha recibido los datos y se reiniciará. Espera a que se conecte al WiFi.");
+      await _rxCharacteristic!.write(utf8.encode(payload));
+      _mostrarAlerta("Datos Enviados", "El ESP32 está verificando las credenciales. Si son correctas, se guardarán.");
       
-      // Desconexión limpia
       await _targetDevice?.disconnect();
-      setState(() {
-        _bleConectado = false;
-        _rxCharacteristic = null;
-      });
+      if (mounted) {
+        setState(() {
+          _bleConectado = false;
+          _rxCharacteristic = null;
+        });
+      }
     } catch (e) {
       _mostrarAlerta("Error de envío", "Falló la escritura de datos vía Bluetooth.");
     }
@@ -125,13 +126,15 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
       _channel = WebSocketChannel.connect(Uri.parse('ws://$ip:8765'));
       
       _channel!.stream.listen((mensaje) {
-        setState(() {
-          _historialMensajes.add("ESP32: $mensaje");
-        });
+        if (mounted) {
+          setState(() {
+            _historialMensajes.add("ESP32: $mensaje");
+          });
+        }
       }, onDone: () {
-        setState(() => _estaConectadoWs = false);
+        if (mounted) setState(() => _estaConectadoWs = false);
       }, onError: (error) {
-        setState(() => _estaConectadoWs = false);
+        if (mounted) setState(() => _estaConectadoWs = false);
       });
 
       setState(() => _estaConectadoWs = true);
@@ -165,6 +168,10 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
   void dispose() {
     _channel?.sink.close();
     _targetDevice?.disconnect();
+    _ssidController.dispose();
+    _passController.dispose();
+    _ipWebSocketController.dispose();
+    _mensajeController.dispose();
     super.dispose();
   }
 
@@ -177,7 +184,6 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // SECCIÓN BLE
             const Text("1. Configuración por Bluetooth", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             ElevatedButton(
@@ -190,8 +196,6 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
             const SizedBox(height: 10),
             ElevatedButton(onPressed: _bleConectado ? enviarDatosWifiPorBle : null, child: const Text("Enviar WiFi por BLE")),
             const Divider(height: 40),
-
-            // SECCIÓN WEBSOCKET
             const Text("2. Operación vía WebSocket", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             TextField(controller: _ipWebSocketController, decoration: const InputDecoration(labelText: "IP Asignada al ESP32")),
@@ -201,7 +205,6 @@ class _ESP32BleConfigPageState extends State<ESP32BleConfigPage> {
               style: ElevatedButton.styleFrom(backgroundColor: _estaConectadoWs ? Colors.green : Colors.blue),
               child: Text(_estaConectadoWs ? "WebSocket Activo" : "Conectar WebSocket"),
             ),
-            
             if (_estaConectadoWs) ...[
               const SizedBox(height: 20),
               TextField(controller: _mensajeController, decoration: const InputDecoration(labelText: "Mensaje en tiempo real")),
