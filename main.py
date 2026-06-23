@@ -1,126 +1,84 @@
-import machine
-import network
-import json
-import os
 import utime
-import ubluetooth
+import uasyncio
+import network
 
-# Import boot.py to inherit its network functions and state variables
+# System modules hierarchy (Only using the 4 completed files)
 import boot
+import config_manager
+import network_manager
+import ble_manager
 
-def save_config_atomic(ssid, password):
+TAG = "[MAIN]"
+
+async def wifi_maintenance_task():
     """
-    Writes atomically to Flash memory to mitigate damage from power outages.
-    Creates a temporary file, and only if successfully written, replaces the master file.
+    Background task to monitor Wi-Fi health and perform silent reconnections.
+    Runs in parallel with the BLE rescue server if a long-term drop occurs.
     """
-    tmp_file = boot.CONFIG_FILE + ".tmp"
-    try:
-        config_data = {"ssid": ssid, "password": password}
-        # 1. Write to temporary file
-        with open(tmp_file, "w") as f:
-            json.dump(config_data, f)
-        
-        # 2. If writing was successful, safely replace the original file
-        if boot.CONFIG_FILE in os.listdir():
-            os.remove(boot.CONFIG_FILE)
-        os.rename(tmp_file, boot.CONFIG_FILE)
-        
-        # Hot-update credentials in volatile memory (RAM)
-        boot.current_credentials["ssid"] = ssid
-        boot.current_credentials["password"] = password
-        print("[MAIN] config.json successfully saved and verified.")
-        return True
-    except Exception as e:
-        print("[MAIN] Critical error saving configuration:", e)
-        return False
-
-def run_ble_pairing_server():
-    print("[PAIRING] Initializing MicroPython BLE stack...")
-    ble = ubluetooth.BLE()
-
     while True:
-        ble.active(True)
-    
-        # Local synchronization context to break the loop from the interrupt service routine (IRQ)
-        ble_context = {"data_received": False, "ssid": "", "password": ""}
-    
-        # Standard configuration UUIDs (you can customize these for your mobile App)
-        SERVICE_UUID = ubluetooth.UUID("0000FFF0-0000-1000-8000-00805F9B34FB")
-        CHARACTERISTIC_UUID = ubluetooth.UUID("0000FFF1-0000-1000-8000-00805F9B34FB")
-    
-        WRITE_PROPERTY = ubluetooth.FLAG_WRITE
-        CONFIG_CHAR = (CHARACTERISTIC_UUID, WRITE_PROPERTY,)
-        CONFIG_SERVICE = (SERVICE_UUID, (CONFIG_CHAR,),)
-        
-        # Register the service and get the memory handle for the characteristic
-        ((wifi_char_handle,),) = ble.gatts_register_services((CONFIG_SERVICE,))
-    
-        def ble_irq(event, data):
-            # Event 3: _IRQ_GATTS_WRITE (A mobile phone/central device wrote data to the ESP32)
-            if event == 3:
-                conn_handle, value_handle = data
-                if value_handle == wifi_char_handle:
-                    try:
-                        raw_payload = ble.gatts_read(wifi_char_handle).decode('utf-8')
-                        # The mobile App must send the string in plain format: "SSID,PASSWORD"
-                        if "," in raw_payload:
-                            parts = raw_payload.split(",", 1)
-                            ble_context["ssid"] = parts[0].strip()
-                            ble_context["password"] = parts[1].strip()
-                            ble_context["data_received"] = True
-                    except Exception as err:
-                        print("[PAIRING] Error decoding BLE payload:", err)
-
-        ble.irq(ble_irq)
-    
-        # Basic structured Advertising Payload to announce the device name
-        device_name = "ESP32_PROV"
-        payload = bytearray([2, 1, 6, len(device_name) + 1, 9]) + device_name.encode()
-        ble.gap_advertise(100000, payload) # Advertise every 100ms
-        print("[PAIRING] ESP32 ready for pairing in the mobile App under the name: 'ESP32_PROV'")
-    
-        # Controlled blocking loop in main.py waiting for user interaction in the App
-        while not ble_context["data_received"]:
-            utime.sleep_ms(200)
-        
-        print("[PAIRING] Credentials captured from the App. Stopping Bluetooth advertising...")
-        ble.gap_advertise(None) # Turn off advertising immediately
-        print("[PAIRING] Testing credentials...")
-    
-        # Attempt actual connection to the user-supplied network (We increase the timeout to 12s)
-        if boot.check_and_connect_wifi(ble_context["ssid"], ble_context["password"], timeout=12000):
-            # ONLY if the connection works in the real world, we persistently save the JSON
-            save_config_atomic(ble_context["ssid"], ble_context["password"])
-            print("[PAIRING] Process completed. Releasing Bluetooth memory...")
-            ble.active(False)  # Free up valuable RAM by turning off the BLE radio stack
-            return True
-        else:
-            print("[PAIRING] Provided credentials failed to connect. Restarting Pairing Mode...")
-            ble.active(False)
-            utime.sleep_ms(500)  # Short delay before restarting the pairing server
-
-# --- PRODUCTION FIRMWARE MAIN ORCHESTRATOR ---
-if boot.force_pairing or not boot.wifi_connected:
-    print("[MAIN] Device requires configuration. Entering provisioning mode.")
-    run_ble_pairing_server()
-
-# ==============================================================================
-#                        MAIN APPLICATION LOGIC
-# ==============================================================================
-print("[MAIN] Running Production Firmware...")
-
-while True:
-    # TODO: Initialize your local WebSocket server here (e.g., microWebSrv or similar)
-    # ws_server.start()    
-
-    # Edge Cases Validation: What happens if Wi-Fi drops DURING normal operation?
-    wlan = network.WLAN(network.STA_IF)
-    if not wlan.isconnected():
-        print("[MAIN] ALERT: Connectivity loss detected during execution.")
-        # Attempt non-blocking background reconnection using data loaded in boot
-        if boot.current_credentials["ssid"]:
-            print("[MAIN] Attempting silent reconnection...")
-            wlan.connect(boot.current_credentials["ssid"], boot.current_credentials["password"])
-            utime.sleep(5)
+        wlan = network.WLAN(network.STA_IF)
+        if not wlan.isconnected():
+            print(f"{TAG} ALERT: Connectivity loss detected during runtime execution.")
             
-    utime.sleep(5)
+            # 1. Trigger non-blocking silent background reconnection attempt
+            await network_manager.attempt_silent_reconnection()
+            
+            # 2. Activate BLE rescue server concurrently so user can update credentials if needed
+            if not ble_manager.is_server_running():
+                print(f"{TAG} Launching background BLE rescue stack as a fail-safe mechanism.")
+                uasyncio.create_task(ble_manager.start_rescue_server())
+        else:
+            # If Wi-Fi is back online, gracefully shut down BLE stack to preserve critical heap RAM
+            if ble_manager.is_server_running():
+                print(f"{TAG} Wi-Fi recovered successfully. Disabling BLE rescue stack to free memory.")
+                ble_manager.stop_rescue_server()
+                
+        await uasyncio.sleep(10)  # Check network interface health every 10 seconds
+
+async def sensor_polling_mock_task():
+    """
+    Temporary mock task replacing sensor_hall to simulate system loop activity.
+    """
+    while True:
+        wlan = network.WLAN(network.STA_IF)
+        if wlan.isconnected():
+            print(f"{TAG} [MOCK SENSOR] System alive. Network verified. (Simulated polling loop).")
+        else:
+            print(f"{TAG} [MOCK SENSOR] System alive. Network disconnected.")
+        await uasyncio.sleep(20)  # Pulse every 20 seconds
+
+async def main_orchestrator():
+    """
+    Main asynchronous coordinator for the production firmware lifecycle state machine.
+    """
+    print(f"{TAG} Bootstrapping system modules setup...")
+    
+    # PHASE 1: Initial Provisioning diagnostics evaluation derived from boot.py
+    if boot.force_pairing or not boot.wifi_connected:
+        print(f"{TAG} Configuration missing or unreachable. Entering blocking BLE onboarding mode.")
+        # Blocks sequential execution until Flutter sends initial "SSID,PASSWORD" packet via BLE
+        await ble_manager.run_blocking_provisioning()
+    
+    # PHASE 2: Hardware Core Subsystems Activation
+    wlan = network.WLAN(network.STA_IF)
+    local_ip = wlan.ifconfig()[0] if wlan.isconnected() else "0.0.0.0"
+    
+    print(f"{TAG} Network interface state verified. Registering long-running asynchronous Firmware core tasks.")
+    print(f"{TAG} Current Active Local IP: {local_ip}")
+    
+    # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
+    uasyncio.create_task(wifi_maintenance_task())
+    uasyncio.create_task(sensor_polling_mock_task())  # Keeps the scheduler doing something safe
+    
+    # PHASE 3: Loop Keep-Alive (Replaces the WebSocket server during early testing)
+    print(f"{TAG} Infrastructure ready. Entering main test loop...")
+    while True:
+        await uasyncio.sleep(1)
+
+# --- MICROCONTROLLER SUBSYSTEM ENTRY POINT ---
+if __name__ == "__main__":
+    try:
+        # Bind and start the cooperative event scheduling loop
+        uasyncio.run(main_orchestrator())
+    except Exception as kernel_panic:
+        print(f"{TAG} CRITICAL CRASH: Unhandled kernel panic inside the main scheduler:", kernel_panic)
