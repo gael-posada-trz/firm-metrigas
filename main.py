@@ -11,6 +11,7 @@ import config_manager
 import network_manager
 import ble_manager
 import sensor_hall
+import websocket_server
 
 TAG = "[MAIN]"
 
@@ -82,6 +83,35 @@ async def premium_reporting_mock_task():
                 await uasyncio.sleep(10)
         await uasyncio.sleep(5)
 
+async def premium_reporting_task():
+    """
+    Background task managing the hybrid 24-hour cloud sync reporting loop.
+    Captures internet loss exceptions directly from the POST handler to alert the user.
+    """
+    print(f"{TAG} Initializing Premium clock service.")
+    while True:
+        # Check time delta using native ticks via the isolated premium_reporter module
+        if premium_reporter.is_premium_active and premium_reporter.has_cycle_expired():
+            print(f"{TAG} 24-hour cycle reached. Proceeding with REST payload compilation.")
+            
+            # Extract clean, filtered percentage from the hardware sensor abstraction module
+            current_gas_level = sensor_hall.read_sensor_percentage()
+            
+            # Execute direct HTTP POST request to Railway. Internal try-except catches timeouts or fiber cuts
+            success = await premium_reporter.send_daily_report(current_gas_level)
+            
+            if not success:
+                # If it failed due to lack of internet (modem fiber cut), notify Flutter
+                print(f"{TAG} REST delivery failed due to network isolation. Dispatching WebSocket warning.")
+                # Directly notify the single connected user through the local WebSocket channel
+                await local_server.broadcast_message({
+                    "event": "internet_loss", 
+                    "msg": "Modem connected locally, but no Internet access found. Please check your home internet connection or contact your provider."
+                })
+                
+        await uasyncio.sleep(30)  # Check daily timer ticks differential every 30 seconds
+
+
 async def main_orchestrator():
     """
     Main asynchronous coordinator for the production firmware lifecycle state machine.
@@ -114,6 +144,7 @@ async def main_orchestrator():
     print(f"{TAG} Current Active Local IP: {local_ip}")
     
     # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
+    uasyncio.create_task(websocket_server.start_websocket_server())
     uasyncio.create_task(wifi_maintenance_task())
     uasyncio.create_task(sensor_hall.sensor_polling_task())
     uasyncio.create_task(sensor_polling_mock_task())
