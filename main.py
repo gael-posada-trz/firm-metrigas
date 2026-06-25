@@ -1,12 +1,16 @@
 import utime
 import uasyncio
 import network
+import urequests
+from machine import Pin
+import 
 
 # System modules hierarchy (Only using the 4 completed files)
 import boot
 import config_manager
 import network_manager
 import ble_manager
+import sensor_hall
 
 TAG = "[MAIN]"
 
@@ -50,9 +54,33 @@ async def sensor_polling_mock_task():
         wlan = network.WLAN(network.STA_IF)
         if wlan.isconnected():
             print(f"{TAG} [MOCK SENSOR] System alive. Network verified. (Simulated polling loop).")
+            print(f"Gas percentage: {sensor_hall.current_gas_percentage}%.")
         else:
             print(f"{TAG} [MOCK SENSOR] System alive. Network disconnected.")
         await uasyncio.sleep(20)  # Pulse every 20 seconds
+
+async def premium_reporting_mock_task():
+    while True:
+        if boot.is_premium:
+            url = "https://www.google.com/"
+            try:
+                respuesta = urequests.head(url, timeout=5)
+                status = respuesta.status_code
+                respuesta.close()
+        
+                if status in (402, 403):
+                    print("[API] Subscription inactive/expired. Disabling 24-hour reports.")
+                    boot.is_premium = False
+                else:
+                    print(f"[API] Daily report sent successfully Gas percentage: {sensor_hall.current_gas_percentage}. Status code: {status}")
+            except Exception as e:
+                print("[API] Network error in daily report, will retry later:", e)
+                if e.errno == -202 or e.errno == 116:
+                    print("[API] Subscription inactive/expired. Disabling 24-hour reports.")
+                    boot.is_premium = False
+                    break
+                await uasyncio.sleep(10)
+        await uasyncio.sleep(5)
 
 async def main_orchestrator():
     """
@@ -87,7 +115,9 @@ async def main_orchestrator():
     
     # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
     uasyncio.create_task(wifi_maintenance_task())
-    uasyncio.create_task(sensor_polling_mock_task())  # Your sensor simulation loop
+    uasyncio.create_task(sensor_hall.sensor_polling_task())
+    uasyncio.create_task(sensor_polling_mock_task())
+    uasyncio.create_task(premium_reporting_mock_task())  # Your sensor simulation loop
     
     # PHASE 3: Loop Keep-Alive (Will hold the main thread up)
     print(f"{TAG} Infrastructure ready. Entering main test loop...")
