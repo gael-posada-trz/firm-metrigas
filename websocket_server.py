@@ -1,8 +1,8 @@
 import json
-import utime
-import uasyncio
-import machine
-from machine import Pin
+import utime # type: ignore
+import uasyncio # type: ignore
+import machine # type: ignore
+from machine import Pin # type: ignore
 
 # Architecture modules
 import boot
@@ -13,12 +13,14 @@ TAG = "[WS_SERVER]"
 
 # Try to import native MicroPython mDNS (available on ESP32 builds)
 try:
-    import wp2
+    import wp2 # type: ignore
     mdns = wp2.mDNS()
+    print("-------------------------------------use wp2")
 except:
     # Fallback if your firmware uses the native network library for mDNS
-    import network
+    import network # type: ignore
     mdns = network.WLAN(network.STA_IF)
+    print("-------------------------------------use WLAN")
 
 def init_or_update_mdns(domain_name):
     """
@@ -167,6 +169,159 @@ async def start_websocket_server():
         print(f"{TAG} Server successfully online.")
         
         # Keep the task alive indefinitely in the scheduler
+        while True:
+            await uasyncio.sleep(3600)
+    except Exception as e:
+        print(f"{TAG} CRITICAL ERROR: Could not mount the local server:", e)
+
+
+
+
+
+
+
+
+
+
+
+
+
+import json
+import utime  # type: ignore
+import uasyncio  # type: ignore
+import network  # type: ignore
+from machine import Pin  # type: ignore
+
+# Architecture modules
+import boot
+import config_manager
+import sensor_hall
+
+TAG = "[WS_SERVER]"
+
+def init_or_update_mdns(domain_name):
+    """
+    Registers or updates the mDNS domain name on the local network using native network tools.
+    If it's the first time, it will use 'gas-device', otherwise, the user's custom name.
+    """
+    try:
+        # Format the name cleanly (mDNS protocol drops spaces and underscores)
+        clean_name = domain_name.lower().replace(" ", "-").replace("_", "-")
+        
+        # MicroPython standard way to set global network identity (v1.20+)
+        network.hostname(clean_name)            
+        print(f"{TAG} mDNS Active. Device locally accessible at: http://{clean_name}.local")
+    except Exception as e:
+        print(f"{TAG} Warning when configuring mDNS hostname:", e)
+
+def decode_lcg(encrypted_data, initial_params):
+    """
+    Decrypts a block of bytes using a Linear Congruential Generator (single cycle).
+    """
+    # Unpack congruential generator parameters
+    x = initial_params["x"]
+    A = initial_params["A"]
+    B = initial_params["B"]
+    base = initial_params["BASE"]
+    
+    result_bytes = bytearray(len(encrypted_data))
+    
+    for j in range(len(encrypted_data)):
+         # LCG Formula: Next pseudorandom state
+        x = (x * A + B) % base
+        
+        # Apply Bitwise XOR between the encrypted byte and the generated number
+        result_bytes[j] = encrypted_data[j] ^ (x % 256)
+        
+    try:
+        # Convert the decrypted byte array to plaintext (JSON String)
+        return result_bytes.decode('utf-8')
+    except Exception as e:
+        print(f"{TAG} ERROR: Encoding error while decrypting LCG packet:", e)
+        return None
+
+async def process_client_command(ws, plaintext):
+    """
+    Business logic handler for incoming JSON messages from Flutter.
+    """
+    try:
+        payload = json.loads(plaintext)
+        action = payload.get("action")
+        value = payload.get("value")
+        
+        # CASE 1: Initial Handshake where the App registers the custom meter name
+        if action == "set_name":
+            print(f"{TAG} Rename request received. New name: '{value}'")
+
+            # Atomically save to local Flash storage (config.json)
+            config_manager.save_config_atomic(device_name=value)
+
+            # Dynamically hot-mutate the mDNS
+            init_or_update_mdns(value)
+            await ws.send(json.dumps({"status": "success", "message": "Name updated, mDNS active"}))
+                
+        # CASE 2: On-demand request for the current gas percentage
+        elif action == "get_telemetry":
+            response = {
+                "event": "gas_percentage",
+                "value": sensor_hall.current_gas_percentage,
+            }
+            await ws.send(json.dumps(response))
+            
+    except Exception as e:
+        print(f"{TAG} Error processing decrypted JSON:", e)
+
+async def handle_websocket_client(reader, writer):
+    """
+    Low-level asynchronous handler for incoming WebSocket connections.
+    """
+    print(f"{TAG} New WebSocket connection established from the Flutter app.")
+    
+    lcg_params = {
+        "x": 123456,  
+        "A": 20011,   
+        "B": 12345,
+        "BASE": 65536
+    }
+    
+    try:
+        while True:
+            line = await reader.read(1024)
+            if not line:
+                break  
+                
+            decrypted_text = decode_lcg(line, lcg_params)
+            
+            if decrypted_text:
+                print(f"{TAG} LCG Message Successfully Decrypted: {decrypted_text}")
+                
+                class WS_Wrapper:
+                    async def send(self, msg):
+                        writer.write(msg.encode('utf-8'))
+                        await writer.drain()
+                
+                await process_client_command(WS_Wrapper(), decrypted_text)
+                
+    except Exception as socket_error:
+        print(f"{TAG} Client connection finalized or interrupted:", socket_error)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        print(f"{TAG} Sockets atomically released.")
+
+async def start_websocket_server():
+    """
+    Launches the local WebSocket server daemon on port 8765.
+    """
+    initial_name = boot.device_name if boot.device_name else "gas-device"
+    print(f"{TAG} Configuring initial mDNS infrastructure...")
+    init_or_update_mdns(initial_name)
+    
+    print(f"{TAG} Opening local WebSocket server on port 8765...")
+    try:
+        server = await uasyncio.start_server(handle_websocket_client, "0.0.0.0", 8765)
+        print(f"{TAG} Server successfully online.")
+        
         while True:
             await uasyncio.sleep(3600)
     except Exception as e:
