@@ -4,170 +4,167 @@ import uasyncio
 import machine
 from machine import Pin
 
-# Módulos de tu arquitectura
+# Architecture modules
 import boot
 import config_manager
 import sensor_hall
 
 TAG = "[WS_SERVER]"
 
-# Intentar importar mDNS nativo de MicroPython (disponible en builds de ESP32)
+# Try to import native MicroPython mDNS (available on ESP32 builds)
 try:
     import wp2
     mdns = wp2.mDNS()
 except:
-    # Fallback si tu firmware usa la librería nativa de red para mDNS
+    # Fallback if your firmware uses the native network library for mDNS
     import network
     mdns = network.WLAN(network.STA_IF)
 
-def inicializar_o_actualizar_mdns(nombre_dominio):
+def init_or_update_mdns(domain_name):
     """
-    Registra o cambia el nombre de dominio mDNS en la red local.
-    Si es la primera vez, usará 'gas-device', si no, el nombre del usuario.
+    Registers or updates the mDNS domain name on the local network.
+    If it's the first time, it will use 'gas-device', otherwise, the user's custom name.
     """
     try:
-        # Reemplazar espacios y caracteres raros para evitar romper el protocolo mDNS
-        clean_name = nombre_dominio.lower().replace(" ", "-")
+        # Replace spaces and special characters to avoid breaking the mDNS protocol
+        clean_name = domain_name.lower().replace(" ", "-")
         
-        # En la mayoría de los firmwares de MicroPython modernos con ESP32-S3:
+        # On most modern MicroPython firmwares with ESP32-S3:
         if hasattr(mdns, "config"):
             mdns.config(hostname=clean_name)
         else:
-            # Si se usa un objeto mDNS dedicado de un módulo externo
+            # If using a dedicated mDNS object from an external module
             mdns.start(clean_name, "local")
             
-        print(f"{TAG} mDNS Activo. Dispositivo accesible localmente en: http://{clean_name}.local")
+        print(f"{TAG} mDNS Active. Device locally accessible at: http://{clean_name}.local")
     except Exception as e:
-        print(f"{TAG} Advertencia al configurar mDNS (Sistemas sin soporte nativo completo):", e)
+        print(f"{TAG} Warning when configuring mDNS (Systems without full native support):", e)
 
-def decodificar_lcg(datos_cifrados, params_iniciales):
+def decode_lcg(encrypted_data, initial_params):
     """
-    Descifra un bloque de bytes utilizando el Generador Congruencial Lineal (1 solo ciclo).
-    Replica exactamente la lógica matemática de tu archivo sockets.cpp.
+    Decrypts a block of bytes using a Linear Congruential Generator (single cycle).
+    Exactly replicates the mathematical logic from your sockets.cpp file.
     """
-    # Desempaquetar parámetros del generador congruencial
-    x = params_iniciales["x"]
-    A = params_iniciales["A"]
-    B = params_iniciales["B"]
-    base = params_iniciales["BASE"]
+    # Unpack congruential generator parameters
+    x = initial_params["x"]
+    A = initial_params["A"]
+    B = initial_params["B"]
+    base = initial_params["BASE"]
     
-    resultado_bytes = bytearray(len(datos_cifrados))
+    result_bytes = bytearray(len(encrypted_data))
     
-    for j in range(len(datos_cifrados)):
-        # Fórmula LCG: Siguiente estado pseudoaleatorio
+    for j in range(len(encrypted_data)):
+        # LCG Formula: Next pseudorandom state
         x = (x * A + B) % base
         
-        # Aplicamos el Bitwise XOR entre el byte cifrado y el número generado
-        resultado_bytes[j] = datos_cifrados[j] ^ (x % 256)
+        # Apply Bitwise XOR between the encrypted byte and the generated number
+        result_bytes[j] = encrypted_data[j] ^ (x % 256)
         
     try:
-        # Convertimos el arreglo de bytes descifrados a texto plano (JSON String)
-        return resultado_bytes.decode('utf-8')
+        # Convert the decrypted byte array to plaintext (JSON String)
+        return result_bytes.decode('utf-8')
     except Exception as e:
-        print(f"{TAG} ERROR: Error de codificación al descifrar paquete LCG:", e)
+        print(f"{TAG} ERROR: Encoding error while decrypting LCG packet:", e)
         return None
 
-async def procesar_comando_cliente(ws, texto_plano):
+async def process_client_command(ws, plaintext):
     """
-    Manejador de la lógica de negocio de los mensajes JSON entrantes de Flutter.
+    Business logic handler for incoming JSON messages from Flutter.
     """
     try:
-        payload = json.loads(texto_plano)
+        payload = json.loads(plaintext)
         action = payload.get("action")
         
-        # CASO 1: Handshake Inicial donde la App registra el nombre personalizado del medidor
+        # CASE 1: Initial Handshake where the App registers the custom meter name
         if action == "set_name":
-            nuevo_nombre = payload.get("device_name")
-            if nuevo_nombre:
-                print(f"{TAG} Solicitud de renombrado recibida. Nuevo nombre: '{nuevo_nombre}'")
+            new_name = payload.get("device_name")
+            if new_name:
+                print(f"{TAG} Rename request received. New name: '{new_name}'")
                 
-                # Guardar de forma atómica en el almacenamiento local Flash (config.json)
-                config_manager.save_config_atomic(device_name=nuevo_nombre)
+                # Atomically save to local Flash storage (config.json)
+                config_manager.save_config_atomic(device_name=new_name)
                 
-                # Mutar dinámicamente el mDNS en caliente
-                inicializar_o_actualizar_mdns(nuevo_nombre)
+                # Dynamically hot-mutate the mDNS
+                init_or_update_mdns(new_name)
                 
-                # Responder confirmación técnica
+                # Send technical confirmation response
                 await ws.send(json.dumps({"status": "success", "message": "Name updated, mDNS active"}))
                 
-        # CASO 2: Solicitud bajo demanda del porcentaje de gas actual
+        # CASE 2: On-demand request for the current gas percentage
         elif action == "get_telemetry":
-            respuesta = {
+            response = {
                 "status": "metrics",
                 "gas_percentage": sensor_hall.current_gas_percentage,
                 "timestamp": utime.ticks_ms()
             }
-            await ws.send(json.dumps(respuesta))
+            await ws.send(json.dumps(response))
             
     except Exception as e:
-        print(f"{TAG} Error al procesar JSON descifrado:", e)
+        print(f"{TAG} Error processing decrypted JSON:", e)
 
-async def manejar_cliente_websocket(reader, writer):
+async def handle_websocket_client(reader, writer):
     """
-    Manejador asíncrono de bajo nivel para las conexiones entrantes del WebSocket.
-    Soporta la recepción de payloads cifrados binarios.
+    Low-level asynchronous handler for incoming WebSocket connections.
+    Supports receiving binary encrypted payloads.
     """
-    print(f"{TAG} Nueva conexión WebSocket establecida desde la app Flutter.")
+    print(f"{TAG} New WebSocket connection established from the Flutter app.")
     
-    # Parámetros de prueba fijos acoplados a tu archivo sockets.cpp (Deben coincidir con Flutter)
-    # En producción estos parámetros pueden derivar de un intercambio de claves basado en la clave pública
-    parametros_lcg = {
-        "x": 123456,  # Semilla inicializada (Seed + Contraseña)
-        "A": 20011,   # Siguiente primo del ejemplo sockets.cpp
+    # Fixed test parameters coupled to your sockets.cpp file (Must match Flutter)
+    # In production, these parameters can derive from a key exchange based on the public key
+    lcg_params = {
+        "x": 123456,  # Initialized seed (Seed + Password)
+        "A": 20011,   # Next prime from the sockets.cpp example
         "B": 12345,
         "BASE": 65536
     }
     
     try:
         while True:
-            # Leer el tamaño del frame o el buffer crudo del socket local
-            linea = await reader.read(1024)
-            if not linea:
-                break  # Desconexión limpia del cliente
+            # Read the frame size or the raw buffer from the local socket
+            line = await reader.read(1024)
+            if not line:
+                break  # Clean client disconnection
                 
-            # Identificar si es un frame de WebSocket válido (Extracción de Payload Útil)
-            # Nota: Si usas Microdot_WebSocket, este procesamiento de bytes se simplifica a:
-            # datos_cifrados = await ws.recv()
+            # Identify if it is a valid WebSocket frame (Useful Payload Extraction)
+            # Note: If using Microdot_WebSocket, this byte processing simplifies to:
+            # encrypted_data = await ws.recv()
             
-            # Asumiendo que recibes los bytes crudos cifrados por el canal binario:
-            texto_descifrado = decodificar_lcg(linea, parametros_lcg)
+            # Assuming you receive the raw encrypted bytes over the binary channel:
+            decrypted_text = decode_lcg(line, lcg_params)
             
-            if texto_descifrado:
-                print(f"{TAG} Mensaje LCG Descifrado Exitosamente: {texto_descifrado}")
-                # Ejecutar lógica de comandos
-                # Inyectamos un objeto mock 'ws' para simular la respuesta
+            if decrypted_text:
+                print(f"{TAG} LCG Message Successfully Decrypted: {decrypted_text}")
+                # Execute command logic
+                # Inject a mock 'ws' object to simulate the response
                 class WS_Wrapper:
                     async def send(self, msg):
                         writer.write(msg.encode('utf-8'))
                         await writer.drain()
                 
-                await procesar_comando_cliente(WS_Wrapper(), texto_descifrado)
+                await process_client_command(WS_Wrapper(), decrypted_text)
                 
-    except Exception as error_socket:
-        print(f"{TAG} Conexión de cliente finalizada o interrumpida:", error_socket)
+    except Exception as socket_error:
+        print(f"{TAG} Client connection finalized or interrupted:", socket_error)
     finally:
         writer.close()
         await writer.wait_closed()
-        print(f"{TAG} Sockets liberados atómicamente.")
+        print(f"{TAG} Sockets atomically released.")
 
 async def start_websocket_server():
     """
-    Lanza el demonio del servidor local WebSocket en el puerto 8765.
-    Configura el nombre mDNS inicial antes de abrir las compuertas de red.
+    Launches the local WebSocket server daemon on port 8765.
+    Configures the initial mDNS name before opening the network gates.
     """
-    # 1. Determinar el nombre de dominio. Si está vacío en config.json, usar el genérico de fábrica
-    nombre_inicial = boot.device_name if boot.device_name else "gas-device"
-    print(f"{TAG} Configurando infraestructura mDNS inicial...")
-    inicializar_o_actualizar_mdns(nombre_inicial)
+    # 1. Determine the domain name. If empty in config.json, use the generic factory default
+    initial_name = boot.device_name if boot.device_name else "gas-device"
+    print(f"{TAG} Configuring initial mDNS infrastructure...")
+    init_or_update_mdns(initial_name)
     
-    # 2. Inicializar el socket del servidor asíncrono cooperativo
-    print(f"{TAG} Abriendo servidor WebSocket local en el puerto 8765...")
+    # 2. Initialize the cooperative async server socket
+    print(f"{TAG} Opening local WebSocket server on port 8765...")
     try:
-        servidor = await uasyncio.start_server(manejar_cliente_websocket, "0.0.0.0", 8765)
-        print(f"{TAG} Servidor en línea de forma exitosa.")
+        server = await uasyncio.start_server(handle_websocket_client, "0.0.0.0", 8765)
+        print(f"{TAG} Server successfully online.")
         
-        # Mantener la tarea viva indefinidamente en el planificador
-        while True:
-            await uasyncio.sleep(3600)
-    except Exception as e:
-        print(f"{TAG} CRITICAL ERROR: No se pudo montar el servidor local:", e)
+        # Keep the task alive indefinitely in the scheduler
+        while True
