@@ -1,5 +1,6 @@
-import uasyncio
-from machine import ADC, Pin
+import uasyncio # type: ignore
+from machine import ADC, Pin # type: ignore
+import utime # type: ignore
 
 TAG = "[SENSOR]"
 
