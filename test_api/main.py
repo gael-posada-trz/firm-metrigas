@@ -1,8 +1,8 @@
-import utime # type: ignore
-import uasyncio # type: ignore
-import network# type: ignore
-import urequests # type: ignore
-from machine import Pin # type: ignore
+import utime
+import uasyncio
+import network
+import urequests
+from machine import Pin
 
 # System modules hierarchy (Only using the 4 completed files)
 import boot
@@ -10,7 +10,6 @@ import config_manager
 import network_manager
 import ble_manager
 import sensor_hall
-import websocket_server
 
 TAG = "[MAIN]"
 
@@ -46,20 +45,28 @@ async def wifi_maintenance_task():
                 
         await uasyncio.sleep(10)  # Check network interface health every 10 seconds
 
-async def sensor_polling_mock_task():
-    """
-    Temporary mock task replacing sensor_hall to simulate system loop activity.
-    """
+async def premium_reporting_mock_task():
     while True:
-        wlan = network.WLAN(network.STA_IF)
-        if wlan.isconnected():
-            print(f"{TAG} [MOCK SENSOR] System alive. Network verified. (Simulated polling loop).")
-            print(f"Gas percentage: {sensor_hall.current_gas_percentage}%.")
-        else:
-            print(f"{TAG} [MOCK SENSOR] System alive. Network disconnected.")
-        await uasyncio.sleep(20)  # Pulse every 20 seconds
-
-
+        if boot.is_premium:
+            url = "https://www.google.com/"
+            try:
+                respuesta = urequests.head(url, timeout=5)
+                status = respuesta.status_code
+                respuesta.close()
+        
+                if status in (402, 403):
+                    print("[API] Subscription inactive/expired. Disabling 24-hour reports.")
+                    boot.is_premium = False
+                else:
+                    print(f"[API] Daily report sent successfully Gas percentage: {sensor_hall.current_gas_percentage}. Status code: {status}")
+            except Exception as e:
+                print("[API] Network error in daily report, will retry later:", e)
+                if e.errno == -202 or e.errno == 116:
+                    print("[API] Subscription inactive/expired. Disabling 24-hour reports.")
+                    boot.is_premium = False
+                    break
+                await uasyncio.sleep(10)
+        await uasyncio.sleep(5)
 
 async def main_orchestrator():
     """
@@ -93,10 +100,8 @@ async def main_orchestrator():
     print(f"{TAG} Current Active Local IP: {local_ip}")
     
     # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
-    uasyncio.create_task(websocket_server.start_websocket_server())
     uasyncio.create_task(wifi_maintenance_task())
-    uasyncio.create_task(sensor_hall.sensor_polling_task())
-    uasyncio.create_task(sensor_polling_mock_task())
+    uasyncio.create_task(premium_reporting_mock_task())  # Your sensor simulation loop
     
     # PHASE 3: Loop Keep-Alive (Will hold the main thread up)
     print(f"{TAG} Infrastructure ready. Entering main test loop...")
@@ -110,3 +115,4 @@ if __name__ == "__main__":
         uasyncio.run(main_orchestrator())
     except Exception as kernel_panic:
         print(f"{TAG} CRITICAL CRASH: Unhandled kernel panic inside the main scheduler:", kernel_panic)
+

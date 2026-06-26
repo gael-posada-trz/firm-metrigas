@@ -1,6 +1,7 @@
-import ubluetooth
-import uasyncio
-import utime
+import ubluetooth # type: ignore
+import uasyncio # type: ignore
+import utime # type: ignore
+
 import boot
 import config_manager
 import network_manager

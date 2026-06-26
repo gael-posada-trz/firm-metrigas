@@ -1,11 +1,11 @@
-import uasyncio # type: ignore
-from machine import ADC, Pin # type: ignore
-import utime # type: ignore
+import uasyncio
+from machine import ADC, Pin
+import utime
 
 TAG = "[SENSOR]"
 
 # Calibration parameters derived from hardware staging profiles
-SENSOR_PIN = 1
+SENSOR_PIN = 4
 EMPTY_BITS = 1200
 FULL_BITS = 3100
 
