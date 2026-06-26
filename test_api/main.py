@@ -3,7 +3,6 @@ import uasyncio
 import network
 import urequests
 from machine import Pin
-import 
 
 # System modules hierarchy (Only using the 4 completed files)
 import boot
