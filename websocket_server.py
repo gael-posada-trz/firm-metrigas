@@ -85,11 +85,12 @@ async def process_client_command(ws, plaintext):
         # CASE 1: BAPTISM / INITIAL CONNECTION
         if action == "set_name":
             # Extract the meter name from the array
-            new_name = action_data[1] 
+            new_name = action_data[1]
+            set_id = action_data[2]
             print(f"{TAG} Rename request received. New name: '{new_name}'")
             
             # Atomically save to local Flash storage (config.json)
-            if config_manager.save_config_atomic(device_name=new_name):
+            if config_manager.save_config_atomic(device_name=new_name, meter_id=set_id):
                 # Dynamically hot-mutate the mDNS
                 init_or_update_mdns(new_name)
                 response = {"status": ["ok", "mDNS_mutated"]}

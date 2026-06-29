@@ -46,21 +46,6 @@ async def wifi_maintenance_task():
                 
         await uasyncio.sleep(10)  # Check network interface health every 10 seconds
 
-async def sensor_polling_mock_task():
-    """
-    Temporary mock task replacing sensor_hall to simulate system loop activity.
-    """
-    while True:
-        wlan = network.WLAN(network.STA_IF)
-        if wlan.isconnected():
-            print(f"{TAG} [MOCK SENSOR] System alive. Network verified. (Simulated polling loop).")
-            print(f"Gas percentage: {sensor_hall.current_gas_percentage}%.")
-        else:
-            print(f"{TAG} [MOCK SENSOR] System alive. Network disconnected.")
-        await uasyncio.sleep(20)  # Pulse every 20 seconds
-
-
-
 async def main_orchestrator():
     """
     Main asynchronous coordinator for the production firmware lifecycle state machine.
@@ -95,8 +80,6 @@ async def main_orchestrator():
     # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
     uasyncio.create_task(websocket_server.start_websocket_server())
     uasyncio.create_task(wifi_maintenance_task())
-    uasyncio.create_task(sensor_hall.sensor_polling_task())
-    uasyncio.create_task(sensor_polling_mock_task())
     
     # PHASE 3: Loop Keep-Alive (Will hold the main thread up)
     print(f"{TAG} Infrastructure ready. Entering main test loop...")

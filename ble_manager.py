@@ -182,12 +182,14 @@ async def run_blocking_provisioning():
         success = boot.check_and_connect_wifi(_ble_context["ssid"], _ble_context["password"], boot.WIFI_TIMEOUT_MS)
         
         if success:
-            # Create initial 4-field config payload atomically using placeholders for business logic
+            # Create initial config payload atomically using placeholders for business logic
             config_manager.save_config_atomic(
                 ssid=_ble_context["ssid"], 
                 password=_ble_context["password"],
-                device_name="Metrigas",
-                is_premium=False
+                device_name=boot.device_name,
+                is_premium=boot.is_premium,
+                meter_id=boot.meter_id,
+                time_target=boot.time_target
             )
             print(f"{TAG} Verification succeeded. Factory onboarding accomplished.")
             stop_rescue_server()

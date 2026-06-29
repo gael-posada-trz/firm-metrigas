@@ -5,7 +5,14 @@ import boot
 
 TAG = "[CONFIG]"
 
-def save_config_atomic(ssid=None, password=None, device_name=None, is_premium=None):
+def save_config_atomic(
+        ssid=None, 
+        password=None, 
+        device_name=None, 
+        is_premium=None,
+        meter_id=None, 
+        time_target=None
+        ):
     """
     Writes parameters atomically to Flash memory to mitigate damage from brownouts.
     Creates a temporary file, and only if successfully written, replaces the master file.
@@ -13,33 +20,39 @@ def save_config_atomic(ssid=None, password=None, device_name=None, is_premium=No
     tmp_file = boot.CONFIG_FILE + ".tmp"
     try:
         # Resolve values: If a parameter is not provided (None), pull it from boot's RAM state
-        f_ssid = ssid if ssid is not None else boot.current_credentials["ssid"]
-        f_password = password if password is not None else boot.current_credentials["password"]
+        f_ssid = ssid if ssid is not None else boot.ssid
+        f_password = password if password is not None else boot.password
         f_device_name = device_name if device_name is not None else boot.device_name
         f_is_premium = is_premium if is_premium is not None else boot.is_premium
+        f_meter_id = meter_id if meter_id is not None else boot.meter_id
+        f_time_target = time_target if time_target is not None else boot.time_target
         
-        # 2. Build the new configuration payload using incoming parameters or keeping old values
+        # Build the new configuration payload using incoming parameters or keeping old values
         payload = {
             "ssid": f_ssid,
             "password": f_password,
             "device_name": f_device_name, 
             "is_premium": f_is_premium,
+            "meter_id": f_meter_id,
+            "time_target": f_time_target
         }
         
-        # 3. Write data to the isolated temporary file buffer
+        # Write data to the isolated temporary file buffer
         with open(tmp_file, "w") as f:
             json.dump(payload, f)
             
-        # 4. If disk write succeeded, replace the original file securely
+        # If disk write succeeded, replace the original file securely
         if boot.CONFIG_FILE in os.listdir():
             os.remove(boot.CONFIG_FILE)
         os.rename(tmp_file, boot.CONFIG_FILE)
         
-        # 5. Hot-update system runtime context (RAM variables) synchronized from boot.py
-        boot.current_credentials["ssid"] = f_ssid
-        boot.current_credentials["password"] = f_password
+        # Hot-update system runtime context (RAM variables) synchronized from boot.py
+        boot.ssid = f_ssid
+        boot.password = f_password
         boot.device_name = f_device_name
         boot.is_premium = f_is_premium
+        boot.meter_id = f_meter_id
+        boot.time_target = f_time_target
         
         print(f"{TAG} System configuration profile atomically saved and RAM variables updated.")
         return True

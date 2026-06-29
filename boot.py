@@ -15,29 +15,33 @@ wifi_connected = False
 force_pairing = False
 
 # Application data context synchronized from Flash to RAM at startup
-current_credentials = {"ssid": "", "password": ""}
+ssid = ""
+password = ""
 device_name = "Metrigas"  # Default fallback name for BLE advertising
-is_premium = False          # Default fallback status for business logic loops
+is_premium = False        # Default fallback status for business logic loops
+meter_id = "" # UUID of the meter assigned in Flutter
+time_target = 0 # Unix timestamp of the next 24-hour report
 
 def load_config():
     """
     Reads the configuration profile from local flash memory.
     Extracts network credentials and persists hardware identity and subscription states.
     """
-    global force_pairing, current_credentials, device_name, is_premium
+    global force_pairing, ssid, password, device_name, is_premium, meter_id, time_target
     try:
         if CONFIG_FILE in os.listdir():
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
                 
                 # Structural validation of essential network fields
-                if "ssid" in data and "password" in data:
-                    current_credentials["ssid"] = data["ssid"]
-                    current_credentials["password"] = data["password"]
-                    
+                if "ssid" in data:
                     # Safe extraction of application fields with production defaults
-                    device_name = data.get("device_name", "Metrigas")
-                    is_premium = data.get("is_premium", False)
+                    ssid = data["ssid"]
+                    password = data["password"]
+                    device_name = data["device_name"]
+                    is_premium = data["is_premium"]
+                    meter_id = data["meter_id"]
+                    time_target = data["time_target"]
                     
                     print(f"{TAG} System configuration successfully loaded from Flash storage.")
                     return True
@@ -92,6 +96,6 @@ print(f"{TAG} Bootstrapping minimal hardware subsystems...")
 
 if load_config():
     # Attempt rapid sync with existing credentials before handing off control to main orchestration
-    check_and_connect_wifi(current_credentials["ssid"], current_credentials["password"], WIFI_TIMEOUT_MS)
+    check_and_connect_wifi(ssid, password, WIFI_TIMEOUT_MS)
 else:
     print(f"{TAG} Skipping network attempts. Moving directly  to main.py BLE for Pairing.")

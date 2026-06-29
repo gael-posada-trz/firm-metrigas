@@ -5,12 +5,9 @@ import utime # type: ignore
 TAG = "[SENSOR]"
 
 # Calibration parameters derived from hardware staging profiles
-SENSOR_PIN = 1
+SENSOR_PIN = 4
 EMPTY_BITS = 1200
 FULL_BITS = 3100
-
-# Global runtime state variable accessible by the WebSocket and main architecture
-current_gas_percentage = 0
 
 # Initialize and lock the ADC hardware peripheral globally
 _adc = ADC(Pin(SENSOR_PIN))
@@ -52,24 +49,3 @@ def get_gas_percentage():
     except Exception as e:
         print(f"{TAG} ERROR: Calculations failed on ADC scaling transformation:", e)
         return 0
-
-async def sensor_polling_task():
-    """
-    Long-running asynchronous daemon loop designed for the main scheduler.
-    Refreshes the shared global gas capacity state every 20 seconds.
-    Yields execution context gracefully to prevent blocking local network sockets.
-    """
-    global current_gas_percentage
-    print(f"{TAG} Initializing Hall sensor telemetry polling engine subsystem.")
-    
-    while True:
-        try:
-            # Fetch fresh stable tracking metrics from hardware
-            current_gas_percentage = get_gas_percentage()
-            print(f"{TAG} Telemetry metrics captured. Current Tank Level: {current_gas_percentage}%")
-            
-        except Exception as e:
-            print(f"{TAG} CRITICAL ERROR: Polling daemon loop encountered an anomaly:", e)
-            
-        # Asynchronous sleep interval matching system business specifications
-        await uasyncio.sleep(20)
