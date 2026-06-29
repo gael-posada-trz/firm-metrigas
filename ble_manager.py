@@ -186,7 +186,7 @@ async def run_blocking_provisioning():
             config_manager.save_config_atomic(
                 ssid=_ble_context["ssid"], 
                 password=_ble_context["password"],
-                device_name="ESP32_PROV",
+                device_name="Metrigas",
                 is_premium=False
             )
             print(f"{TAG} Verification succeeded. Factory onboarding accomplished.")
