@@ -1,8 +1,8 @@
-import machine
-import network
+import machine  # type: ignore
+import network # type: ignore
 import json
 import os
-import utime
+import utime # type: ignore
 
 TAG = "[BOOT]"
 
@@ -16,7 +16,7 @@ force_pairing = False
 
 # Application data context synchronized from Flash to RAM at startup
 current_credentials = {"ssid": "", "password": ""}
-device_name = "ESP32_PROV"  # Default fallback name for BLE advertising
+device_name = "Metrigas"  # Default fallback name for BLE advertising
 is_premium = False          # Default fallback status for business logic loops
 
 def load_config():
@@ -36,7 +36,7 @@ def load_config():
                     current_credentials["password"] = data["password"]
                     
                     # Safe extraction of application fields with production defaults
-                    device_name = data.get("device_name", "ESP32_PROV")
+                    device_name = data.get("device_name", "Metrigas")
                     is_premium = data.get("is_premium", False)
                     
                     print(f"{TAG} System configuration successfully loaded from Flash storage.")
