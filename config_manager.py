@@ -1,5 +1,6 @@
 import os
 import json
+import machine # type: ignore
 import boot
 
 TAG = "[CONFIG]"
@@ -61,6 +62,7 @@ def force_factory_reset():
         if boot.CONFIG_FILE in os.listdir():
             os.remove(boot.CONFIG_FILE)
             print(f"{TAG} Factory reset successful: master profile config.json removed from storage.")
+            machine.reset()  # Immediately reboot the device to re-enter onboarding mode
             return True
         print(f"{TAG} Factory reset skipped: master profile config.json non-existent.")
         return True
