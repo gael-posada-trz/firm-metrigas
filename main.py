@@ -4,12 +4,10 @@ import network# type: ignore
 import urequests # type: ignore
 from machine import Pin # type: ignore
 
-# System modules hierarchy (Only using the 4 completed files)
+# Architecture modules
 import boot
-import config_manager
 import network_manager
 import ble_manager
-import sensor_hall
 import websocket_server
 
 TAG = "[MAIN]"
