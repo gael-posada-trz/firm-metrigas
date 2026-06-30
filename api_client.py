@@ -11,7 +11,7 @@ import config_manager
 import sensor_hall
 
 TAG = "[API_CLIENT]"
-INTERVALO_24_HORAS_SEGUNDOS = 24 * 60 * 60
+INTERVAL_24_HOURS_SECONDS = 24 * 60 * 60
 TARGET_URL = "https://tu-api-nestjs.onrender.com/logs" # Set your production endpoint here
 
 
@@ -48,7 +48,7 @@ def send_log_to_endpoint(percentage):
         print(f"{TAG} Physical connection error when reporting to external API: {e}")
         return 0
 
-async def api_reporting_daemon_task():
+async def api_reporting_task():
     """
     Cooperative asynchronous background daemon task for WAN reporting control.
     Monitors the target time and handles Premium state degradation.

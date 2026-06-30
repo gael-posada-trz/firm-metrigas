@@ -31,7 +31,10 @@ def encode_lcg(plaintext, initial_params):
     return bytes(encrypted_bytes)
 
 async def enviar_cambio_nombre():
-    # 1. Estructura el JSON con tu nuevo formato de arreglos compactos
+    # 1. Estructura el JSON con tu nuevo formato de arreglos compact
+    # 
+    # 
+    # os
     mensaje_json = json.dumps({"action": "get_percentage"})
     print(f"[CLIENTE] Texto plano a enviar: {mensaje_json}")
     

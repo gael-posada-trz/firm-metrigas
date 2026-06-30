@@ -17,8 +17,8 @@ async def attempt_silent_reconnection():
     if wlan.isconnected():
         return True
         
-    target_ssid = boot.current_credentials["ssid"]
-    target_password = boot.current_credentials["password"]
+    target_ssid = boot.ssid
+    target_password = boot.password
     
     if not target_ssid:
         print(f"{TAG} Aborting silent reconnection: Cache memory contains empty credentials.")
@@ -46,28 +46,50 @@ async def test_new_credentials(ssid, password):
     """
     print(f"{TAG} Isolating interface to test incoming credentials for SSID: {ssid}")
     wlan = network.WLAN(network.STA_IF)
+    print("wlan set")
+
+    wlan.active(False)
+    await uasyncio.sleep_ms(200)
     wlan.active(True)
+    await uasyncio.sleep_ms(200)
     
-    # Gracefully disconnect current station layer to perform a clean diagnostic test
-    if wlan.isconnected():
+    try:
         wlan.disconnect()
-        await uasyncio.sleep_ms(500)
-        
-    wlan.connect(ssid, password)
+        await uasyncio.sleep_ms(300)
+    except:
+        pass
+
+    # Gracefully disconnect current station layer to perform a clean diagnostic test
+    #if wlan.isconnected():
+    #    wlan.disconnect()
+    #    await uasyncio.sleep_ms(500)
+    #    print("WLAN WAS CONNECTED, NOW DISCONECTED")
+
+    try:
+        print(f"{TAG} Trying to connect to:", ssid)
+        wlan.connect(ssid, password)
+    except OSError as e:
+        print(f"{TAG} Error directo al lanzar connect: {e}")
+        return False
     
     # Bounded polling loop that yields control to the asynchronous engine
     start_time = utime.ticks_ms()
     test_timeout_ms = boot.WIFI_TIMEOUT_MS
     
     while not wlan.isconnected():
+        #print("WHILE WITH WLAN CONNECTED")
         # Evaluate time delta using signed subtraction to mitigate clock overflow bugs
         if utime.ticks_diff(utime.ticks_ms(), start_time) > test_timeout_ms:
             print(f"{TAG} Verification failed: Network connection timed out with provided BLE parameters.")
             
             # Safe Fallback: Attempt to revert connection back to previous known working parameters in RAM
-            if boot.current_credentials["ssid"]:
-                print(f"{TAG} Rolling back radio parameters to baseline credentials.")
-                wlan.connect(boot.current_credentials["ssid"], boot.current_credentials["password"])
+            if boot.ssid:
+                try:
+                    print(f"{TAG} Rolling back radio parameters to baseline credentials.")
+                    wlan.disconnect()
+                    wlan.connect(boot.ssid, boot.password)
+                except:
+                    pass
             return False
             
         await uasyncio.sleep_ms(100)

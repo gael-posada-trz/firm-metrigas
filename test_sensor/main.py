@@ -93,7 +93,7 @@ async def main_orchestrator():
     print(f"{TAG} Bootstrapping system modules setup...")
     
     # Check if the cache contains actual credentials from a valid config.json
-    has_stored_credentials = bool(boot.current_credentials["ssid"])
+    has_stored_credentials = bool(boot.ssid)
     
     # PHASE 1: Initial Provisioning diagnostics evaluation
     # ONLY enter blocking mode if force_pairing is True OR it is a clean factory device (no SSID cached)

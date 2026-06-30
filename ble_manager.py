@@ -1,6 +1,6 @@
 import ubluetooth # type: ignore
 import uasyncio # type: ignore
-import utime # type: ignore
+import json
 
 import boot
 import config_manager
@@ -62,24 +62,29 @@ def _ble_irq_handler(event, data):
             try:
                 # Read incoming binary chunk directly from the characteristic buffer
                 raw_payload = _ble.gatts_read(_handle_char_wifi).decode('utf-8')
-                print(f"{TAG} Raw configuration transmission intercepted over BLE transport layer.")
-                
-                if "," in raw_payload:
-                    # Tokenize string structured as "SSID,PASSWORD"
-                    parts = raw_payload.split(",", 1)
-                    incoming_ssid = parts[0].strip()
-                    incoming_password = parts[1].strip()
-                    
-                    print(f"{TAG} Processing onboarding parameters for Network Destination: {incoming_ssid}")
-                    
-                    # Offload validation logic to a synchronous execution context
-                    # (Note: IRQs cannot directly await async tasks, main or manager handles execution)
-                    _ble_context["ssid"] = incoming_ssid
-                    _ble_context["password"] = incoming_password
-                    _provisioning_done = True
-                    
+                print(f"{TAG} Raw configuration transmission intercepted over BLE transport layer. Rawpayload:", raw_payload)
+                try:
+                    # Tokenize string structured as json "SSID PASSWORD"
+                    payload_dict = json.loads(raw_payload)
+                    incoming_ssid = payload_dict.get("ssid")
+                    incoming_password = payload_dict.get("pwd")
+
+                    if incoming_ssid is not None: 
+                        print(f"{TAG} Processing onboarding parameters for Network Destination: {incoming_ssid}")
+                        # Offload validation logic to a synchronous execution context
+                        # (Note: IRQs cannot directly await async tasks, main or manager handles execution)
+                        _ble_context["ssid"] = incoming_ssid
+                        _ble_context["password"] = incoming_password
+                        _provisioning_done = True
+                    else:
+                        print(f"{TAG} WARNING: JSON received but 'ssid' key is missing.")
+                except ValueError:
+                    print(f"{TAG} ERROR: Payload received is not a valid JSON string.")
             except Exception as e:
                 print(f"{TAG} ERROR: Exception raised while parsing incoming BLE GATT payload:", e)
+    elif event == 21:
+        conn_handle, mtu = data
+        print(f"{TAG} MTU successfully negotiated! Agreed current size: {mtu} bytes!")
 
 # Memory context container to share data back from hardware IRQ to async loops
 _ble_context = {"ssid": "", "password": ""}
@@ -90,6 +95,7 @@ def _init_ble_stack():
     
     _ble = ubluetooth.BLE()
     _ble.active(True)
+    _ble.config(mtu=255)
     _ble.irq(_ble_irq_handler)
     
     # Define primary service UUID and write-only configuration characteristic
@@ -102,6 +108,7 @@ def _init_ble_stack():
     
     # Register the service in native RAM and save pointer address
     _handle_char_wifi= _ble.gatts_register_services((SERVICE_CONFIG,))[0][0]
+    _ble.gatts_write(_handle_char_wifi, bytes(255))
 
 def stop_rescue_server():
     """Gracefully kills advertising loops and tears down the BLE stack to maximize free heap RAM."""
@@ -178,8 +185,12 @@ async def run_blocking_provisioning():
         print(f"{TAG} Initial transmission capture successful. Testing infrastructure connectivity.")
         _ble.gap_advertise(None)  # Quiet down radio while testing router link
         
+        await uasyncio.sleep_ms(500)
+        print(f"{TAG} Launching non-blocking network verification task...")
+
         # Force full synchronous check via boot mechanism
-        success = boot.check_and_connect_wifi(_ble_context["ssid"], _ble_context["password"], boot.WIFI_TIMEOUT_MS)
+        # uasyncio.sleep_ms(200)
+        success = await network_manager.test_new_credentials(_ble_context["ssid"], _ble_context["password"])
         
         if success:
             # Create initial config payload atomically using placeholders for business logic
@@ -196,6 +207,13 @@ async def run_blocking_provisioning():
             break #Breaks the infinite loop and continues execution safely
         else:
             print(f"{TAG} ERROR: Factory credentials failed. Resetting state and retrying sequence.")
-            stop_rescue_server()
-            # Recursive asynchronous restart
-            await uasyncio.sleep_ms(500)  # Minimal settling delay before turning the radio back on
+            # We cancelled the advertising to start fresh.
+            _provisioning_done = False
+            _ble_context["ssid"] = ""
+            _ble_context["password"] = ""
+
+            await uasyncio.sleep_ms(1500)
+
+            # Wait a second before turning BLE advertising back on so that Flutter can retry.
+            payload = _build_advertising_payload(boot.device_name)
+            _ble.gap_advertise(100000, payload)  # Minimal settling delay before turning the radio back on

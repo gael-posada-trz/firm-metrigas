@@ -1,7 +1,6 @@
 import utime # type: ignore
 import uasyncio # type: ignore
 import network# type: ignore
-import urequests # type: ignore
 from machine import Pin # type: ignore
 
 # Architecture modules
@@ -9,6 +8,7 @@ import boot
 import network_manager
 import ble_manager
 import websocket_server
+import api_client
 
 TAG = "[MAIN]"
 
@@ -52,7 +52,7 @@ async def main_orchestrator():
     print(f"{TAG} Bootstrapping system modules setup...")
     
     # Check if the cache contains actual credentials from a valid config.json
-    has_stored_credentials = bool(boot.current_credentials["ssid"])
+    has_stored_credentials = bool(boot.ssid)
     
     # PHASE 1: Initial Provisioning diagnostics evaluation
     # ONLY enter blocking mode if force_pairing is True OR it is a clean factory device (no SSID cached)
@@ -77,6 +77,7 @@ async def main_orchestrator():
     
     # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
     uasyncio.create_task(websocket_server.start_websocket_server())
+    uasyncio.create_task(api_client.api_reporting_task())
     uasyncio.create_task(wifi_maintenance_task())
     
     # PHASE 3: Loop Keep-Alive (Will hold the main thread up)
