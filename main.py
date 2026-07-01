@@ -9,6 +9,7 @@ import network_manager
 import ble_manager
 import websocket_server
 import api_client
+import sensor_hall
 
 TAG = "[MAIN]"
 
@@ -75,6 +76,9 @@ async def main_orchestrator():
     print(f"{TAG} Network interface state verified. Registering long-running asynchronous Firmware core tasks.")
     print(f"{TAG} Current Active Local IP: {local_ip}")
     
+    # while True:
+    #    print(sensor_hall.get_gas_percentage())
+
     # Concurrent core runtime tasks under the same uasyncio cooperative loop architecture
     uasyncio.create_task(websocket_server.start_websocket_server())
     uasyncio.create_task(api_client.api_reporting_task())
